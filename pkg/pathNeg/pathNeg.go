@@ -295,9 +295,9 @@ func (p *PathNegConn) WriteTo(buf []byte, dest UDPAddr) (int,error) {
     // copy data to new buffer
     l := len(buf)
     localBuffer := make([]byte,l+1)
-    err := copy(localBuffer[1:],buf)
-    if err != nil {
-        return 0,err
+    cpN := copy(localBuffer[1:],buf)
+    if cpN != l {
+        return 0, errFailedCopy
     }
 
     // set type of payload to data
