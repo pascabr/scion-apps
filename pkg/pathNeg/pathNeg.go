@@ -51,10 +51,10 @@ package pathNeg
 
 import (
 	"context"
-	// "fmt"
+	"fmt"
 	"net"
-	// "os"
-	// "time"
+	"os"
+	"time"
 
 	"github.com/scionproto/scion/go/lib/addr"
 	"github.com/scionproto/scion/go/lib/sciond"
@@ -62,21 +62,21 @@ import (
 	"github.com/scionproto/scion/go/lib/serrors"
 	"github.com/scionproto/scion/go/lib/snet/addrutil"
 	"github.com/scionproto/scion/go/lib/sock/reliable"
-    "github.com/scionproto/scion/go/lib/slayers"
+    // "github.com/scionproto/scion/go/lib/slayers"
 )
 
 type PathNegConn struct{
-   currConn *snet.conn
-   otherConns []*snet.conn
-   listenConn *snet.conn
-   otherListen []*snet.conn
+   currConn *snet.Conn
+   otherConns []*snet.Conn
+   listenConn *snet.Conn
+   otherListen []*snet.Conn
 }
 
 // Network extends the snet.Network interface by making the local IA and common
 // sciond connections public.
 // The default singleton instance of this type is obtained by the DefNetwork
 // function.
-type network struct {
+type Network struct {
 	snet.Network
 	IA            addr.IA
 	PathQuerier   snet.PathQuerier
@@ -99,22 +99,22 @@ var (
     errNoWriteToConn = serrors.New("No listending connection to write to!")
 )
 
-var defNetwork Network
+var dNet Network
 
-func defNetwork() *Network{
-    return &defNetwork
+func DefNetwork() *Network{
+    return &dNet
 }
 
-func newPathNegConn(address string) (PathNegConn, error){
+func NewPathNegConn() (PathNegConn, error){
     var conn PathNegConn
 
     //initialize Network
     err := initDefNetwork()
     if err != nil{
-        return nil,err
+        return conn,err
     }
 
-    conn.otherConns = make([]*snet.conn,0)
+    conn.otherConns = make([]*snet.Conn,0)
 
     return conn,nil
 }
@@ -124,8 +124,7 @@ func (p *PathNegConn) Dial(address string) error{
     // if we already have a connection
     // move the current one to the slice
     // use the new one as default if p.currConn != nil{
-        p.otherConns = append(p.otherConns,p.currConn)
-    }
+    p.otherConns = append(p.otherConns,p.currConn)
 
     raddr, err := ResolveUDPAddr(address)
     if err != nil{
@@ -171,12 +170,12 @@ func (p *PathNegConn) CloseCurr() error{
 
     // close connection
     err := p.currConn.Close()
-    if er != nil {
+    if err != nil {
         return err
     }
 
     // if there is another connection restore the last one
-    l := len(p,otherConns)
+    l := len(p.otherConns)
     if l > 0 {
         p.currConn = p.otherConns[l-1]
         p.otherConns = p.otherConns[:l-1]
@@ -199,25 +198,27 @@ func (p *PathNegConn) CloseAll() error {
     }
 
     // close all other connections
-    for (c : p.otherConns){
-        err := p.currConn.Close()
+    for _,c := range p.otherConns{
+        err = c.Close()
         if err != nil{
             return err
         }
     }
 
     p.currConn = nil
-    p.otherConns = []
+    p.otherConns = make([]*snet.Conn,0)
+
+    return nil
 }
 
 // Read from the current connection
 func (p *PathNegConn) Read (buf []byte) (int,error){
     // check if we have a connection to listen from
     if p.currConn == nil{
-        return errNoReadConn
+        return 0,errNoReadConn
     }
 
-    localBuffer = make([]bytes,len(buf)+1)
+    localBuffer := make([]byte,len(buf)+1)
     n, err := p.currConn.Read(localBuffer)
     if err != nil{
         return 0,err
@@ -227,14 +228,22 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
     if localBuffer[0] == newPathType{
         // new path --> use it
         // read old destination
-        remote := p.currConn.base.remote
+        remote := p.currConn.RemoteAddr()
+        udpAddr := remote.String()
+
+        // generate new snet.UDPAddr
+        raddr, err := ResolveUDPAddr(udpAddr)
+        if err != nil{
+            return 0,nil
+        }
 
         // add new path to old destination
-        remote.Path.Raw = localBuffer[1:]
-        remote.Path.Type = slayers.PathTypeSCION
+        raddr.Path.Raw = localBuffer[1:]
+        // raddr.Path.Type = slayers.PathTypeSCION
+        raddr.Path.Type = 1
 
         // create new connection with new path
-        c, err := p.DialAddr(remote)
+        err = p.DialAddr(raddr)
         if err != nil {
             return 0,err
         }
@@ -242,9 +251,8 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         // switch to new path and read from there
         return p.Read(buf)
 
-    }
     // otherwise check for data
-    else if localBuffer[0] == dataType{
+    } else if localBuffer[0] == dataType{
         // data in buffer
         // copy everything but first byte
         cpN := copy(buf,localBuffer[1:])
@@ -285,10 +293,10 @@ func (p *PathNegConn) Write(buf []byte) (int,error){
 
 
 //write to destination through listening connection
-func (p *PathNegConn) WriteTo(buf []byte, dest UDPAddr) (int,error) {
+func (p *PathNegConn) WriteTo(buf []byte, dest *snet.UDPAddr) (int,error) {
     // check for existance of connection
     if p.listenConn == nil{
-        return 0, errNoWriteToConn
+        return 0,errNoWriteToConn
     }
 
     // prepare answer data
@@ -297,21 +305,31 @@ func (p *PathNegConn) WriteTo(buf []byte, dest UDPAddr) (int,error) {
     localBuffer := make([]byte,l+1)
     cpN := copy(localBuffer[1:],buf)
     if cpN != l {
-        return 0, errFailedCopy
+        return 0,errFailedCopy
     }
 
     // set type of payload to data
     localBuffer[0] = dataType
 
-    n, err := p.listenConn.WriteTo(localBuffer,dest)
+    n,err := p.listenConn.WriteTo(localBuffer,dest)
     if err != nil {
-        return 0, err
+        return 0,err
     }
     // return adapted number of written bytes
-    return (n-1), nil
+    return n, nil
+}
+func (p *PathNegConn) WriteToFrom(buf []byte, dest *net.Addr) (int,error){
+    // convert address
+    clientCCAddr := dest.(*snet.UDPAddr)
+
+    // call WriteTo
+    n,err := p.WriteTo(buf,clientCCAddr)
+    return n,err
 }
 
-func (p *PathNegConn) SendPath([]bytes, dest UDPAddr) (int,err){
+
+
+func (p *PathNegConn) SendPath(buf []byte, dest *snet.UDPAddr) (int,error){
     // check for existance of connection
     if p.listenConn == nil{
         return 0, errNoWriteToConn
@@ -321,9 +339,9 @@ func (p *PathNegConn) SendPath([]bytes, dest UDPAddr) (int,err){
     // copy data to new buffer
     l := len(buf)
     localBuffer := make([]byte,l+1)
-    err := copy(localBuffer[1:],buf)
-    if err != nil {
-        return 0,err
+    n := copy(localBuffer[1:],buf)
+    if n != l {
+        return 0,errFailedCopy
     }
 
     // set type of payload to newPath
@@ -347,7 +365,7 @@ func (p *PathNegConn) SendPath([]bytes, dest UDPAddr) (int,err){
 // This is all that snet currently provides, we'll need to add a layer on top
 // that updates the paths in case they expire or are revoked.
 func dialAddr(raddr *snet.UDPAddr) (*snet.Conn, error) {
-	if raddr.Path == nil {
+	if raddr.Path.IsEmpty() {
 		err := SetDefaultPath(raddr)
 		if err != nil {
 			return nil, err
@@ -380,6 +398,25 @@ func (p *PathNegConn) Listen(addr *net.UDPAddr) error{
 
 }
 
+func (p *PathNegConn) ListenPort(port uint16) error{
+    // if we already listening to a connection, 
+    // move the current one to the slice
+    // use the new one as default
+    if p.listenConn != nil{
+        p.otherListen = append(p.otherListen,p.listenConn)
+    }
+
+    c, err := listenPort(port)
+    if err != nil {
+        return err
+    }
+
+    p.listenConn = c
+
+    return nil
+
+}
+
 // Listen acts like net.ListenUDP in a SCION network.
 // The listen address or parts of it may be nil or unspecified, signifying to
 // listen on a wildcard address.
@@ -396,7 +433,12 @@ func listen(listen *net.UDPAddr) (*snet.Conn, error) {
 		}
 		listen = &net.UDPAddr{IP: localIP, Port: listen.Port, Zone: listen.Zone}
 	}
-	return DefNetwork().Listen(context.Background(), "udp", listen, addr.SvcNone)
+    defNetwork := DefNetwork()
+    integrationEnv, _ := os.LookupEnv("SCION_GO_INTEGRATION")
+    if integrationEnv == "1" || integrationEnv == "true" || integrationEnv == "TRUE" {
+        fmt.Printf("Listening ia==:%v\n", defNetwork.IA)
+    }
+    return defNetwork.Listen(context.Background(), "udp", listen, addr.SvcNone)
 }
 
 // ListenPort is a shortcut to Listen on a specific port with a wildcard IP address.
@@ -451,20 +493,19 @@ func initDefNetwork() error {
 		return err
 	}
 	pathQuerier := sciond.Querier{Connector: sciondConn, IA: localIA}
-	n := snet.NewNetworkWithPR(
+	n := snet.NewNetwork(
 		localIA,
 		dispatcher,
-		pathQuerier,
 		sciond.RevHandler{Connector: sciondConn},
 	)
-	defNetwork = network{Network: n, IA: localIA, PathQuerier: pathQuerier, hostInLocalAS: hostInLocalAS}
+	dNet = Network{Network: n, IA: localIA, PathQuerier: pathQuerier, hostInLocalAS: hostInLocalAS}
 	return nil
 }
 
 func findSciond(ctx context.Context) (sciond.Connector, error) {
 	address, ok := os.LookupEnv("SCION_DAEMON_ADDRESS")
 	if !ok {
-		address = sciond.DefaultSCIONDAddress
+		address = sciond.DefaultAPIAddress
 	}
 	sciondConn, err := sciond.NewService(address).Connect(ctx)
 	if err != nil {
@@ -511,7 +552,7 @@ func isSocket(mode os.FileMode) bool {
 
 // findAnyHostInLocalAS returns the IP address of some (infrastructure) host in the local AS.
 func findAnyHostInLocalAS(ctx context.Context, sciondConn sciond.Connector) (net.IP, error) {
-	addr, err := sciond.TopoQuerier{Connector: sciondConn}.OverlayAnycast(ctx, addr.SvcBS)
+	addr, err := sciond.TopoQuerier{Connector: sciondConn}.UnderlayAnycast(ctx, addr.SvcCS)
 	if err != nil {
 		return nil, err
 	}
