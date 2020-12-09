@@ -24,10 +24,14 @@ import (
     // "../../pkg/pathNeg/pathNeg"
     // "scion-apps/pkg/pathNeg"
 )
+
+
 var (
     serverPort uint16 = 1234
-    serverAddr string = "1-ff00:0:131,[127.0.0.77]:1234"
-    clientAddr string = "1-ff00:0:112,[127.0.0.60]"
+    // serverAddr string = "1-ff00:0:131,[127.0.0.77]:1234"
+    // clientAddr string = "1-ff00:0:112,[127.0.0.60]"
+    serverAddr string = "1-ff00:0:131,[127.0.0.1]:1234"
+    clientAddr string = "1-ff00:0:112,[127.0.0.1]"
 )
 const sleepTime int = 3
 
@@ -41,6 +45,7 @@ func main(){
         fmt.Printf("Can't be both client and server")
         return
     }
+    flag.Parse()
     // we have either server or client
     // start accordingly
     if (*server){
@@ -61,13 +66,18 @@ func run_server() error {
     //initialize path neg conn
     pnc, err := pathNeg.NewPathNegConn()
     if err != nil {
+        fmt.Printf("[Server] Error generating new PathNegConn!\n")
         return err
     }
 
+    fmt.Printf("[Server] Start listening to port: %d\n",serverPort)
+    // addr := &net.UDPAddr{Port: int(serverPort),IP: serverAddr}
     pnc.ListenPort(serverPort)
 
     buffer := make([]byte, 16*1024)
     for {
+
+        fmt.Printf("[Server] Receiving....\n")
         // receive packet
         n,from,err := pnc.ReadFrom(buffer)
         if err != nil{
@@ -75,12 +85,13 @@ func run_server() error {
             return nil
         }
         // print packet
-        fmt.Printf("[Server] Packet: %s\n",string(buffer))
+        fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
 
         response := []byte("Hello Back")
 
+        fmt.Printf("[Server] Sending....\n")
         // send back --> same path
-        n, err = pnc.WriteToFrom(response, from)
+        n, err = pnc.WriteTo(response, from)
         if err != nil{
             fmt.Printf("[Server] Error Writing back!\n")
             return err
@@ -108,7 +119,10 @@ func run_client() error {
         return err
     }
 
+    fmt.Printf("[Client] Starting...\n")
+
     for{
+        fmt.Printf("[Client] Sending ...\n")
         // send hello to server
         s := []byte("Hello World")
         nBytes, err := pnc.Write(s)
@@ -117,6 +131,7 @@ func run_client() error {
             return err
         }
 
+        fmt.Printf("[Client] Receiving ...\n")
         // receive hello back
         buffer := make([]byte, 1024)
         nBytes, err = pnc.Read(buffer)

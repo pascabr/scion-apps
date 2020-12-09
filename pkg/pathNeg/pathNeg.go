@@ -111,10 +111,13 @@ func NewPathNegConn() (PathNegConn, error){
     //initialize Network
     err := initDefNetwork()
     if err != nil{
+        fmt.Printf("Error creating default net\n")
         return conn,err
     }
 
     conn.otherConns = make([]*snet.Conn,0)
+
+    fmt.Printf("[Library] Created PathNegConn\n")
 
     return conn,nil
 }
@@ -130,6 +133,7 @@ func (p *PathNegConn) Dial(address string) error{
     if err != nil{
         return err
     }
+    fmt.Printf("[Library] Resolved Address: %s\n",raddr)
 
     c, err := dialAddr(raddr)
     if err != nil{
@@ -223,6 +227,7 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
     if err != nil{
         return 0,err
     }
+    fmt.Printf("[Library] Got Data\n")
 
     // check for new path
     if localBuffer[0] == newPathType{
@@ -255,10 +260,14 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
     } else if localBuffer[0] == dataType{
         // data in buffer
         // copy everything but first byte
-        cpN := copy(buf,localBuffer[1:])
+        cpN := copy(buf,localBuffer[1:n])
         if cpN != (n-1){
+            fmt.Printf("Copied: %d bytes\n",cpN)
             return 0,errFailedCopy
         }
+        // fmt.Printf("Copied: %d of %d bytes\n",cpN,n)
+        // fmt.Printf("BufferSize: local = %d\n",len(localBuffer))
+        // fmt.Printf("BufferSize: remote = %d\n",len(buf))
         return cpN,nil
     }
 
@@ -277,6 +286,7 @@ func (p *PathNegConn) ReadFrom (buf []byte) (int,net.Addr,error){
     if err != nil{
         return 0, nil, err
     }
+    fmt.Printf("[Library] Got Data\n")
 
     return n, src, nil
 }
@@ -293,7 +303,7 @@ func (p *PathNegConn) Write(buf []byte) (int,error){
 
 
 //write to destination through listening connection
-func (p *PathNegConn) WriteTo(buf []byte, dest *snet.UDPAddr) (int,error) {
+func (p *PathNegConn) WriteTo(buf []byte, dest net.Addr) (int,error) {
     // check for existance of connection
     if p.listenConn == nil{
         return 0,errNoWriteToConn
@@ -318,18 +328,19 @@ func (p *PathNegConn) WriteTo(buf []byte, dest *snet.UDPAddr) (int,error) {
     // return adapted number of written bytes
     return n, nil
 }
-func (p *PathNegConn) WriteToFrom(buf []byte, dest *net.Addr) (int,error){
-    // convert address
-    clientCCAddr := dest.(*snet.UDPAddr)
+// func (p *PathNegConn) WriteToFrom(buf []byte, dest *net.Addr) (int,error){
+//     // convert address
+//     // clientCCAddr := dest.(*snet.UDPAddr)
+//     clientCCAddr := dest
+//
+//     // call WriteTo
+//     n,err := p.WriteTo(buf,clientCCAddr)
+//     return n,err
+// }
 
-    // call WriteTo
-    n,err := p.WriteTo(buf,clientCCAddr)
-    return n,err
-}
 
 
-
-func (p *PathNegConn) SendPath(buf []byte, dest *snet.UDPAddr) (int,error){
+func (p *PathNegConn) SendPath(buf []byte, dest net.Addr) (int,error){
     // check for existance of connection
     if p.listenConn == nil{
         return 0, errNoWriteToConn
@@ -431,6 +442,7 @@ func listen(listen *net.UDPAddr) (*snet.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
+        fmt.Printf("[Library] DefaultLocalIP to: %s\n",localIP)
 		listen = &net.UDPAddr{IP: localIP, Port: listen.Port, Zone: listen.Zone}
 	}
     defNetwork := DefNetwork()
@@ -438,6 +450,7 @@ func listen(listen *net.UDPAddr) (*snet.Conn, error) {
     if integrationEnv == "1" || integrationEnv == "true" || integrationEnv == "TRUE" {
         fmt.Printf("Listening ia==:%v\n", defNetwork.IA)
     }
+    fmt.Printf("[Library] Listening to: %s\n",listen)
     return defNetwork.Listen(context.Background(), "udp", listen, addr.SvcNone)
 }
 
