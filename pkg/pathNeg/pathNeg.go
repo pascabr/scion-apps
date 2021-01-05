@@ -50,7 +50,9 @@ to one specific IP address).
 package pathNeg
 
 import (
+    "bytes"
 	"context"
+    "encoding/gob"
 	"fmt"
 	"net"
 	"os"
@@ -244,15 +246,41 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         // generate new snet.UDPAddr
         raddr, err := ResolveUDPAddr(udpAddr)
         if err != nil{
-            return 0,nil
+            return 0,err
         }
         fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
 
-        // add new path to old destination
-        raddr.Path.Raw = localBuffer[1:]
-        // raddr.Path.Type = slayers.PathTypeSCION
-        raddr.Path.Type = 1
+        // decode path from network packet
+        buffer := bytes.NewBuffer(localBuffer[1:n])
+        dec := gob.NewDecoder(buffer)
+        var recvPath snet.Path
+        err = dec.Decode(&recvPath)
+        if err != nil{
+            fmt.Printf("[Library] Error decoding Path!\n")
+            return 0,err
+        }
 
+        // newPath := recvPath.Copy()
+        // err = newPath.Path().Reverse()
+        // if err != nil{
+        //     fmt.Printf("[Library] Error reversing path\n")
+        //     return 0, err
+        // }
+
+        // Set Path to newly received path
+        // SetPath(raddr,newPath)
+        raddr.Path = recvPath.Path()
+        raddr.Path.Reverse()
+        inters := recvPath.Metadata().Interfaces
+        nextIA := inters[len(inters)-2].IA
+        fmt.Printf("[Library] NextIA: %s\n",nextIA)
+        pathNextHop,err := QueryPaths(nextIA)
+        if err != nil{
+            return 0, err
+        }
+
+        // raddr.NextHop = recvPath.UnderlayNextHop()
+        raddr.NextHop = pathNextHop[0].UnderlayNextHop()
         fmt.Printf("[Library] New Path: %s\n",raddr.Path)
 
         // create new connection with new path
@@ -262,17 +290,17 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
             return 0,err
         }
 
+        // // send back ok
+        // reply := []byte("New Path OK")
+        // fmt.Printf("[Library] Sending NewPathOK")
+        // n,err = p.Write(reply)
+        // if err != nil || n != len(reply){
+        //     fmt.Printf("[Library] Error Sending NewPathOK\n")
+        //     return 0,err
+        // }
+
         // clear used buffer
         localBuffer = nil
-
-        // send back ok
-        reply := []byte("New Path OK")
-        fmt.Printf("[Library] Sending NewPathOK")
-        n,err = p.Write(reply)
-        if err != nil || n != len(reply){
-            fmt.Printf("[Library] Error Sending NewPathOK\n")
-            return 0,err
-        }
 
         // switch to new path and read from there
         fmt.Printf("[Library] Recursive Read...\n")
@@ -363,17 +391,27 @@ func (p *PathNegConn) WriteTo(buf []byte, dest net.Addr) (int,error) {
 
 
 
-func (p *PathNegConn) SendPath(buf []byte, dest net.Addr) (int,error){
+func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
     // check for existance of connection
     if p.listenConn == nil{
         return 0, errNoWriteToConn
     }
 
-    // prepare answer data
+    // prepare path data
+    var pathBytes bytes.Buffer
+    enc := gob.NewEncoder(&pathBytes)
+    err := enc.Encode(sendPath)
+    if err != nil{
+        fmt.Printf("[Library] Error Encoding path\n")
+        return 0, err
+    }
+
     // copy data to new buffer
-    l := len(buf)
+    inbetween := pathBytes.Bytes()
+    fmt.Printf("[Library] Sending path, size: %d bytes\n",len(inbetween))
+    l := len(inbetween)
     localBuffer := make([]byte,l+1)
-    n := copy(localBuffer[1:],buf)
+    n := copy(localBuffer[1:],inbetween)
     if n != l {
         return 0,errFailedCopy
     }
@@ -381,10 +419,11 @@ func (p *PathNegConn) SendPath(buf []byte, dest net.Addr) (int,error){
     // set type of payload to newPath
     localBuffer[0] = newPathType
 
-    n, err := p.listenConn.WriteTo(localBuffer,dest)
+    n, err = p.listenConn.WriteTo(localBuffer,dest)
     if err != nil {
         return 0, err
     }
+
     // return adapted number of written bytes
     return (n-1), nil
 
