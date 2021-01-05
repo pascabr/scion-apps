@@ -19,8 +19,10 @@ import (
     "fmt"
     "time"
     "os"
+    "math/rand"
 
     "github.com/pascabr/scion-apps/pkg/pathNeg"
+    "github.com/scionproto/scion/go/lib/snet"
     // "../../pkg/pathNeg/pathNeg"
     // "scion-apps/pkg/pathNeg"
 )
@@ -89,7 +91,59 @@ func run_server() error {
 
         response := []byte("Hello Back")
 
-        fmt.Printf("[Server] Sending....\n")
+        // print paths to sender
+        fmt.Printf("[Server] Paths to Sender: \n")
+        fromAddr,err := pathNeg.ResolveUDPAddr(from.String())
+        if err != nil{
+            return err
+        }
+        paths,err := pnc.GetPaths(fromAddr)
+        if err == nil{
+            for n,p := range paths{
+                fmt.Printf("Path %d:", n)
+                fmt.Println(p)
+            }
+        }
+
+        // pick a path at random
+        r := rand.Int() % len(paths)
+        fmt.Printf("[Server] Selcted Path %d: %s\n", r,paths[r])
+        path := paths[r].Path().Copy()
+        err = path.Reverse()
+        if err != nil{
+            return err
+        }
+
+        fmt.Printf("[Server] Path: %s\n",path)
+        // from = snet.UDPAddr* (from)
+        // from.Path = paths[r].Path()
+        // from = net.Addr (from)
+        n, err = pnc.SendPath(path.Raw, from)
+        if (n != len(path.Raw) || err != nil){
+            fmt.Printf("[Server] Error Sending Path\n")
+            return err
+        }
+
+        fmt.Printf("[Server] Receiving....\n")
+        // receive packet
+        n,from,err = pnc.ReadFrom(buffer)
+        if err != nil{
+            fmt.Printf("[Server] Error Reading packet!\n")
+            return nil
+        }
+        // print packet
+        fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
+
+        switch a := from.(type){
+        case *snet.UDPAddr:
+            a.Path = paths[r].Path().Copy()
+            fmt.Printf("[Sever] Changed Path\n")
+            fmt.Printf("[Server] Path: %s\n",a.Path)
+        default:
+            fmt.Printf("Type Err\n")
+        }
+
+        fmt.Printf("[Server] Sending to %s....\n",from)
         // send back --> same path
         n, err = pnc.WriteTo(response, from)
         if err != nil{

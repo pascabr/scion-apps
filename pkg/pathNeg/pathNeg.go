@@ -97,6 +97,7 @@ var (
     errFailedCopy = serrors.New("Failed to copy data to provided buffer")
     errNoWriteConn = serrors.New("No connection to write to!")
     errNoWriteToConn = serrors.New("No listending connection to write to!")
+    errPathProb = serrors.New("No Path found!")
 )
 
 var dNet Network
@@ -222,6 +223,8 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         return 0,errNoReadConn
     }
 
+    fmt.Printf("[Library] Starting to read...\n")
+
     localBuffer := make([]byte,len(buf)+1)
     n, err := p.currConn.Read(localBuffer)
     if err != nil{
@@ -231,33 +234,53 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
 
     // check for new path
     if localBuffer[0] == newPathType{
+        fmt.Printf("[Library] Got new path...\n")
         // new path --> use it
         // read old destination
         remote := p.currConn.RemoteAddr()
         udpAddr := remote.String()
+        fmt.Printf("[Library] Remote is: %s\n", udpAddr)
 
         // generate new snet.UDPAddr
         raddr, err := ResolveUDPAddr(udpAddr)
         if err != nil{
             return 0,nil
         }
+        fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
 
         // add new path to old destination
         raddr.Path.Raw = localBuffer[1:]
         // raddr.Path.Type = slayers.PathTypeSCION
         raddr.Path.Type = 1
 
+        fmt.Printf("[Library] New Path: %s\n",raddr.Path)
+
         // create new connection with new path
+        fmt.Printf("[Library] Dialing %s\n", raddr)
         err = p.DialAddr(raddr)
         if err != nil {
             return 0,err
         }
 
+        // clear used buffer
+        localBuffer = nil
+
+        // send back ok
+        reply := []byte("New Path OK")
+        fmt.Printf("[Library] Sending NewPathOK")
+        n,err = p.Write(reply)
+        if err != nil || n != len(reply){
+            fmt.Printf("[Library] Error Sending NewPathOK\n")
+            return 0,err
+        }
+
         // switch to new path and read from there
+        fmt.Printf("[Library] Recursive Read...\n")
         return p.Read(buf)
 
     // otherwise check for data
     } else if localBuffer[0] == dataType{
+        fmt.Printf("[Library] Got data...")
         // data in buffer
         // copy everything but first byte
         cpN := copy(buf,localBuffer[1:n])
@@ -265,9 +288,9 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
             fmt.Printf("Copied: %d bytes\n",cpN)
             return 0,errFailedCopy
         }
-        // fmt.Printf("Copied: %d of %d bytes\n",cpN,n)
-        // fmt.Printf("BufferSize: local = %d\n",len(localBuffer))
-        // fmt.Printf("BufferSize: remote = %d\n",len(buf))
+        fmt.Printf("Copied: %d of %d bytes\n",cpN,n)
+        fmt.Printf("BufferSize: local = %d\n",len(localBuffer))
+        fmt.Printf("BufferSize: remote = %d\n",len(buf))
         return cpN,nil
     }
 
@@ -426,6 +449,16 @@ func (p *PathNegConn) ListenPort(port uint16) error{
 
     return nil
 
+}
+
+// Get all (different) paths to provided addr
+func (p *PathNegConn) GetPaths(addr *snet.UDPAddr) ([]snet.Path,error) {
+    paths, err := QueryPaths(addr.IA)
+    if (err != nil || len(paths) == 0){
+        return nil,errPathProb
+    }
+
+    return paths,nil
 }
 
 // Listen acts like net.ListenUDP in a SCION network.
