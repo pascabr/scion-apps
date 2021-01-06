@@ -249,14 +249,14 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         return 0,errNoReadConn
     }
 
-    fmt.Printf("[Library] Starting to read...\n")
+    // fmt.Printf("[Library] Starting to read...\n")
 
     localBuffer := make([]byte,len(buf)+1)
     n, err := p.currConn.Read(localBuffer)
     if err != nil{
         return 0,err
     }
-    fmt.Printf("[Library] Got Data\n")
+    // fmt.Printf("[Library] Got Data\n")
 
     // check for new path
     if localBuffer[0] == newPathType{
@@ -490,7 +490,7 @@ func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
     // prepare data structure to send path
     inters := sendPath.Metadata().Interfaces
     nextIA := inters[len(inters)-2].IA
-    fmt.Printf("[Library] NextIA: %s\n",nextIA)
+    // fmt.Printf("[Library] NextIA: %s\n",nextIA)
 
     var pt pathTrans
     pt.Path = sendPath.Path()
@@ -518,9 +518,9 @@ func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
 
     // copy data to new buffer
     inbetween := pathBytes.Bytes()
-    fmt.Printf("[Library] Sending path, size: %d bytes\n",len(inbetween))
+    // fmt.Printf("[Library] Sending path, size: %d bytes\n",len(inbetween))
     l := len(inbetween)
-    fmt.Printf("[Library] Inbetween size: %d\n",l)
+    // fmt.Printf("[Library] Inbetween size: %d\n",l)
     localBuffer := make([]byte,l+1)
     n := copy(localBuffer[1:],inbetween)
     if n != l {
