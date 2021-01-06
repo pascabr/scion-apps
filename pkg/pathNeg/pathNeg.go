@@ -57,6 +57,7 @@ import (
 	"net"
 	"os"
 	"time"
+    // "reflect"
 
 	"github.com/scionproto/scion/go/lib/addr"
 	"github.com/scionproto/scion/go/lib/sciond"
@@ -65,6 +66,8 @@ import (
 	"github.com/scionproto/scion/go/lib/snet/addrutil"
 	"github.com/scionproto/scion/go/lib/sock/reliable"
     // "github.com/scionproto/scion/go/lib/slayers"
+    "github.com/scionproto/scion/go/lib/spath"
+    "github.com/scionproto/scion/go/lib/common"
 )
 
 type PathNegConn struct{
@@ -72,6 +75,13 @@ type PathNegConn struct{
    otherConns []*snet.Conn
    listenConn *snet.Conn
    otherListen []*snet.Conn
+}
+
+type pathTrans struct{
+    Path spath.Path
+    Intfs string
+    IA  addr.IA
+    ID common.IFIDType
 }
 
 // Network extends the snet.Network interface by making the local IA and common
@@ -218,6 +228,20 @@ func (p *PathNegConn) CloseAll() error {
     return nil
 }
 
+func stringDiff (a string, b string) (int){
+    count := 0
+    l := len(a)
+    if len(b) < l{
+        l = len(b)
+    }
+    for i:=0 ; i < l; i++{
+        if a[i] == b[i]{
+            count +=1
+        }
+    }
+    return count
+}
+
 // Read from the current connection
 func (p *PathNegConn) Read (buf []byte) (int,error){
     // check if we have a connection to listen from
@@ -241,19 +265,20 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         // read old destination
         remote := p.currConn.RemoteAddr()
         udpAddr := remote.String()
-        fmt.Printf("[Library] Remote is: %s\n", udpAddr)
+        // fmt.Printf("[Library] Remote is: %s\n", udpAddr)
 
         // generate new snet.UDPAddr
         raddr, err := ResolveUDPAddr(udpAddr)
         if err != nil{
             return 0,err
         }
-        fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
+        // fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
 
         // decode path from network packet
-        buffer := bytes.NewBuffer(localBuffer[1:n])
+        buffer := bytes.NewBuffer(localBuffer[1:])
+        fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
         dec := gob.NewDecoder(buffer)
-        var recvPath snet.Path
+        var recvPath pathTrans
         err = dec.Decode(&recvPath)
         if err != nil{
             fmt.Printf("[Library] Error decoding Path!\n")
@@ -269,19 +294,84 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
 
         // Set Path to newly received path
         // SetPath(raddr,newPath)
-        raddr.Path = recvPath.Path()
-        raddr.Path.Reverse()
-        inters := recvPath.Metadata().Interfaces
-        nextIA := inters[len(inters)-2].IA
-        fmt.Printf("[Library] NextIA: %s\n",nextIA)
-        pathNextHop,err := QueryPaths(nextIA)
+        // raddr.Path = recvPath.Path.Copy()
+        // fmt.Printf("[Library] Path: %x\n",raddr.Path)
+        // raddr.Path.Reverse()
+        // fmt.Printf("[Library] RevPath: %x\n",raddr.Path)
+        // fmt.Printf("[Library] NextIA: %s\n",recvPath.IA)
+        pathNextHop,err := QueryPaths(recvPath.IA)
         if err != nil{
             return 0, err
         }
 
         // raddr.NextHop = recvPath.UnderlayNextHop()
         raddr.NextHop = pathNextHop[0].UnderlayNextHop()
-        fmt.Printf("[Library] New Path: %s\n",raddr.Path)
+        // fmt.Printf("[Library] New Path: %s\n",raddr.Path)
+        // intfs := pathNextHop[0].Metadata().Interfaces
+        // fmt.Printf("[Library] New IntF: %s\n",intfs[0].ID)
+        // fmt.Printf("[Library] NextIA: %s\n",intfs[0].IA)
+        // fmt.Printf("[Library] New IntF: %s\n",intfs[1].ID)
+        // fmt.Printf("[Library] NextIA: %s\n",intfs[1].IA)
+        localPaths,err := QueryPaths(raddr.IA)
+        if err != nil{
+            return 0, err
+        }
+        // for n,e := range localPaths{
+        //     fmt.Printf("%d: %s\n",n,e)
+        // }
+        // fmt.Printf("WOOOOORKING ---------\n")
+        // fmt.Printf("%x \n",localPaths[5].Path())
+        // fmt.Printf("Local: %s \n",localPaths[5].UnderlayNextHop())
+        // fmt.Printf("Received: %s \n",raddr.NextHop)
+
+
+        //FIND CLOSEST PATH
+        best := 0
+        best_count := 0
+        for n,p := range localPaths{
+            localStr := fmt.Sprintf("%s\n",p.Metadata().Interfaces)
+            count := stringDiff(localStr, recvPath.Intfs)
+            if count > best_count{
+                best = n
+                best_count = count
+            }
+        }
+
+
+        // workaround!!
+        raddr.Path = localPaths[best].Path()
+        raddr.NextHop = localPaths[best].UnderlayNextHop()
+        fmt.Printf("[Library] Picked Path #%s\n",localPaths[best].Metadata().Interfaces)
+        localStr := fmt.Sprintf("%s\n",localPaths[best].Metadata().Interfaces)
+        if localStr == recvPath.Intfs{
+            fmt.Println("[Library] Path is Equal")
+        }
+
+        // compare interface list
+        // fmt.Printf("Start comparison .....\n")
+        // localIntfs := localPaths[5].Metadata().Interfaces
+        // localIntfsString := fmt.Sprintf("%s\n",localIntfs)
+        // if (localIntfsString == recvPath.Intfs){
+        //     fmt.Println("Equal ---->>")
+        // }
+        // fmt.Println(localIntfsString)
+        // fmt.Println(recvPath.Intfs)
+        // fmt.Println(len(localIntfsString))
+        // fmt.Println(len(recvPath.Intfs))
+        // ll := len(recvPath.intfs)
+        // localIntfs := localPaths[5].Metadata().Interfaces
+        // fmt.Printf("Length: %d --> %d\n",ll,len(localIntfs))
+        // for n,pi := range recvPath.intfs{
+        //     if (pi.ID != localIntfs[ll-n].ID){
+        //         fmt.Printf("Diff ID: %s --> %s\n",pi.ID, localIntfs[ll-n].ID)
+        //     }
+        //     if (pi.IA != localIntfs[ll-n].IA){
+        //         fmt.Printf("Diff IA: %s --> %s\n",pi.IA, localIntfs[ll-n].IA)
+        //     }
+        // }
+
+        // fmt.Printf("Compare Result: %t\n", reflect.DeepEqual(localIntfs,recvPath.intfs))
+
 
         // create new connection with new path
         fmt.Printf("[Library] Dialing %s\n", raddr)
@@ -290,14 +380,14 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
             return 0,err
         }
 
-        // // send back ok
-        // reply := []byte("New Path OK")
-        // fmt.Printf("[Library] Sending NewPathOK")
-        // n,err = p.Write(reply)
-        // if err != nil || n != len(reply){
-        //     fmt.Printf("[Library] Error Sending NewPathOK\n")
-        //     return 0,err
-        // }
+        // send back ok
+        reply := []byte("NewPathOK")
+        fmt.Printf("[Library] Sending NewPathOK\n")
+        n,err = p.Write(reply)
+        if err != nil || n != len(reply){
+            fmt.Printf("[Library] Error Sending NewPathOK\n")
+            return 0,err
+        }
 
         // clear used buffer
         localBuffer = nil
@@ -308,7 +398,7 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
 
     // otherwise check for data
     } else if localBuffer[0] == dataType{
-        fmt.Printf("[Library] Got data...")
+        fmt.Printf("[Library] Got data... \n")
         // data in buffer
         // copy everything but first byte
         cpN := copy(buf,localBuffer[1:n])
@@ -316,9 +406,9 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
             fmt.Printf("Copied: %d bytes\n",cpN)
             return 0,errFailedCopy
         }
-        fmt.Printf("Copied: %d of %d bytes\n",cpN,n)
-        fmt.Printf("BufferSize: local = %d\n",len(localBuffer))
-        fmt.Printf("BufferSize: remote = %d\n",len(buf))
+        // fmt.Printf("Copied: %d of %d bytes\n",cpN,n)
+        // fmt.Printf("BufferSize: local = %d\n",len(localBuffer))
+        // fmt.Printf("BufferSize: remote = %d\n",len(buf))
         return cpN,nil
     }
 
@@ -397,10 +487,30 @@ func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
         return 0, errNoWriteToConn
     }
 
+    // prepare data structure to send path
+    inters := sendPath.Metadata().Interfaces
+    nextIA := inters[len(inters)-2].IA
+    fmt.Printf("[Library] NextIA: %s\n",nextIA)
+
+    var pt pathTrans
+    pt.Path = sendPath.Path()
+    pt.IA = nextIA
+    // fmt.Printf("[Library] IntersSize: %d\n",len(inters))
+    // fmt.Printf("[Library] IntersSize: %d\n",len(pt.intfs))
+    // fmt.Printf("[Library] Str: %s\n",inters)
+    // InterString := fmt.Sprintf("%s\n",inters)
+
+    var revIters []snet.PathInterface
+    for i:=len(inters)-1; i>=0; i--{
+        revIters = append(revIters,inters[i])
+    }
+    pt.Intfs = fmt.Sprintf("%s\n",revIters)
+
+
     // prepare path data
     var pathBytes bytes.Buffer
     enc := gob.NewEncoder(&pathBytes)
-    err := enc.Encode(sendPath)
+    err := enc.Encode(pt)
     if err != nil{
         fmt.Printf("[Library] Error Encoding path\n")
         return 0, err
@@ -410,6 +520,7 @@ func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
     inbetween := pathBytes.Bytes()
     fmt.Printf("[Library] Sending path, size: %d bytes\n",len(inbetween))
     l := len(inbetween)
+    fmt.Printf("[Library] Inbetween size: %d\n",l)
     localBuffer := make([]byte,l+1)
     n := copy(localBuffer[1:],inbetween)
     if n != l {
@@ -423,6 +534,8 @@ func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
     if err != nil {
         return 0, err
     }
+
+    // wait for confirmation
 
     // return adapted number of written bytes
     return (n-1), nil
