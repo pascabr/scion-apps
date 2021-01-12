@@ -68,6 +68,7 @@ import (
     // "github.com/scionproto/scion/go/lib/slayers"
     "github.com/scionproto/scion/go/lib/spath"
     "github.com/scionproto/scion/go/lib/common"
+    // "github.com/scionproto/scion/go/lib/slayers/path/scion"
 )
 
 type PathNegConn struct{
@@ -340,12 +341,59 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
 
         // workaround!!
         raddr.Path = localPaths[best].Path()
-        raddr.NextHop = localPaths[best].UnderlayNextHop()
-        fmt.Printf("[Library] Picked Path #%s\n",localPaths[best].Metadata().Interfaces)
+        err = recvPath.Path.Reverse()
+        if err != nil{
+            fmt.Printf("[Library] Error Reversing Path\n")
+            fmt.Println(err)
+            return 0,err
+        }
+
+        raddr.Path = recvPath.Path
+        // raddr.NextHop = localPaths[best].UnderlayNextHop()
+        // fmt.Printf("[Library] Picked Path #%s\n",localPaths[best].Metadata().Interfaces)
+        fmt.Printf("[Library] Picked Path #%s\n",localPaths[best])
         localStr := fmt.Sprintf("%s\n",localPaths[best].Metadata().Interfaces)
         if localStr == recvPath.Intfs{
             fmt.Println("[Library] Path is Equal")
         }
+
+
+        // =======================================
+        //
+        // var dPath scion.Decoded
+        // err = dPath.DecodeFromBytes(recvPath.Path.Raw)
+        // if err != nil{
+        //     fmt.Printf("[Library] Error decoding path\n")
+        //     fmt.Println(err)
+        //     return 0, err
+        // }
+        // fmt.Printf("%v+\n",dPath)
+        // err = dPath.DecodeFromBytes(localPaths[best].Path().Raw)
+        // if err != nil{
+        //     fmt.Printf("[Library] Error decoding path\n")
+        //     fmt.Println(err)
+        //     return 0, err
+        // }
+        //
+        // // Do the same with the reversed path
+        // fmt.Printf("%v+\n",dPath)
+        // err = recvPath.Path.Reverse()
+        // if err != nil{
+        //     fmt.Printf("[Library] Error Reversing Path\n")
+        //     fmt.Println(err)
+        //     return 0,err
+        // }
+        // err = dPath.DecodeFromBytes(recvPath.Path.Raw)
+        // if err != nil{
+        //     fmt.Printf("[Library] Error decoding path\n")
+        //     fmt.Println(err)
+        //     return 0, err
+        // }
+        // fmt.Printf("%v+\n",dPath)
+        // // fmt.Printf("%x\n",recvPath.Path)
+        // // fmt.Printf("%x\n",localPaths[best].Path())
+        //
+        // =============================================
 
         // compare interface list
         // fmt.Printf("Start comparison .....\n")
