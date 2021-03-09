@@ -22,7 +22,7 @@ import (
     "math/rand"
 
     "github.com/pascabr/scion-apps/pkg/pathNeg"
-    // "github.com/scionproto/scion/go/lib/snet"
+    "github.com/scionproto/scion/go/lib/snet"
     // "../../pkg/pathNeg/pathNeg"
     // "scion-apps/pkg/pathNeg"
 )
@@ -91,6 +91,17 @@ func run_server() error {
 
         response := []byte("Hello Back")
 
+        // write back first before sending new path
+        fmt.Printf("[Server] Sending to %s....\n",from)
+        // send back --> same path
+        n, err = pnc.WriteTo(response, from)
+        if err != nil{
+            fmt.Printf("[Server] Error Writing back!\n")
+            return err
+        }
+        time.Sleep(3*time.Second)
+
+
         // print paths to sender
         fmt.Printf("[Server] Paths to Sender: \n")
         fromAddr,err := pathNeg.ResolveUDPAddr(from.String())
@@ -118,7 +129,16 @@ func run_server() error {
         // from = snet.UDPAddr* (from)
         // from.Path = paths[r].Path()
         // from = net.Addr (from)
-        n, err = pnc.SendPath(paths[r], from)
+        var fromSnet snet.UDPAddr
+        switch a:= from.(type){
+        case *snet.UDPAddr:
+            fromSnet = *a
+        default:
+            fmt.Println("Problem")
+        }
+
+        // n, err = pnc.SendPath(paths[r], from)
+        n, err = pnc.SendBackPath(fromSnet, from)
         if (err != nil){
             fmt.Printf("[Server] Error Sending Path\n")
             fmt.Printf("[Server] %s\n",err)
