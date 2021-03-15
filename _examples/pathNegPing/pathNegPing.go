@@ -23,16 +23,11 @@ import (
     "math/rand"
 
     "github.com/pascabr/scion-apps/pkg/pathNeg"
-    // "github.com/scionproto/scion/go/lib/snet"
-    // "../../pkg/pathNeg/pathNeg"
-    // "scion-apps/pkg/pathNeg"
 )
 
 
 var (
     serverPort uint16 = 1234
-    // serverAddr string = "1-ff00:0:131,[127.0.0.77]:1234"
-    // clientAddr string = "1-ff00:0:112,[127.0.0.60]"
     serverAddr string = "1-ff00:0:131,[127.0.0.1]:1234"
     clientAddr string = "1-ff00:0:112,[127.0.0.1]"
     verbose bool = false
@@ -74,14 +69,17 @@ func run_server() error {
         return err
     }
 
-    fmt.Printf("[Server] Start listening to port: %d\n",serverPort)
-    // addr := &net.UDPAddr{Port: int(serverPort),IP: serverAddr}
+    if verbose {
+        fmt.Printf("[Server] Start listening to port: %d\n",serverPort)
+    }
     pnc.ListenPort(serverPort)
 
     buffer := make([]byte, 16*1024)
     for {
 
-        fmt.Printf("[Server] Receiving....\n")
+        if verbose {
+            fmt.Printf("[Server] Receiving....\n")
+        }
         // receive packet
         n,from,err := pnc.ReadFrom(buffer)
         if err != nil{
@@ -89,7 +87,9 @@ func run_server() error {
             return nil
         }
         // print packet
-        fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
+        if verbose {
+            fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
+        }
 
 
         // print paths to sender
@@ -111,12 +111,17 @@ func run_server() error {
         // fmt.Printf("[Server] Selected Path %d: %s\n", r,paths[r])
         ialist := ""
         for n,iter := range paths[r].Metadata().Interfaces{
-            if n % 2 == 1{
-                continue
-            }
             ias := strings.Split(fmt.Sprintf("%s",iter.IA),":")
             if n == 0{
                 ialist = fmt.Sprintf("%s",ias[2])
+                continue
+            }
+            if n == (len(paths[r].Metadata().Interfaces)-1){
+                ialist = fmt.Sprintf("%s -> %s",ialist,ias[2])
+                continue
+            }
+            if n % 2 == 1{
+                continue
             }else{
                 ialist = fmt.Sprintf("%s -> %s",ialist,ias[2])
             }
@@ -131,7 +136,9 @@ func run_server() error {
             return err
         }
 
-        fmt.Printf("[Server] Receiving....\n")
+        if verbose {
+            fmt.Printf("[Server] Receiving....\n")
+        }
         // receive packet
         n,from,err = pnc.ReadFrom(buffer)
         if err != nil{
@@ -139,11 +146,15 @@ func run_server() error {
             return nil
         }
         // print packet
-        fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
+        if verbose{
+            fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
+        }
 
         response := []byte("Hello Back")
 
-        fmt.Printf("[Server] Sending to %s --> %s\n",string(response),from)
+        if verbose {
+            fmt.Printf("[Server] Sending to %s --> %s\n",string(response),from)
+        }
         // send back --> same path
         n, err = pnc.WriteTo(response, from)
         if err != nil{
