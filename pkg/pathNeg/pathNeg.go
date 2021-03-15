@@ -50,9 +50,9 @@ to one specific IP address).
 package pathNeg
 
 import (
-    "bytes"
+    // "bytes"
 	"context"
-    "encoding/gob"
+    // "encoding/gob"
 	"fmt"
 	"net"
 	"os"
@@ -100,6 +100,8 @@ const (
 	initTimeout = 1 * time.Second
     newPathType byte = 2
     dataType byte = 1
+    recvPathPort = 6666
+    verbose = false
 )
 
 var (
@@ -131,7 +133,9 @@ func NewPathNegConn() (PathNegConn, error){
 
     conn.otherConns = make([]*snet.Conn,0)
 
-    fmt.Printf("[Library] Created PathNegConn\n")
+    if verbose{
+        fmt.Printf("[Library] Created PathNegConn\n")
+    }
 
     return conn,nil
 }
@@ -147,7 +151,9 @@ func (p *PathNegConn) Dial(address string) error{
     if err != nil{
         return err
     }
-    fmt.Printf("[Library] Resolved Address: %s\n",raddr)
+    if verbose{
+        fmt.Printf("[Library] Resolved Address: %s\n",raddr)
+    }
 
     c, err := dialAddr(raddr)
     if err != nil{
@@ -249,188 +255,94 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
     if p.currConn == nil{
         return 0,errNoReadConn
     }
-
-    fmt.Printf("[Library] Starting to read...\n")
+    if verbose {
+        fmt.Printf("[Library] Starting to read...\n")
+    }
 
     localBuffer := make([]byte,len(buf)+1)
     n, err := p.currConn.Read(localBuffer)
     if err != nil{
         return 0,err
     }
-    fmt.Printf("[Library] Got Data\n")
+    if verbose {
+        fmt.Printf("[Library] Got Data\n")
+    }
 
     // check for new path
     if localBuffer[0] == newPathType{
-        fmt.Printf("[Library] Got new path...\n")
+        if verbose {
+            fmt.Printf("[Library] Got new path...\n")
+        }
         // new path --> use it
         // read old destination
         remote := p.currConn.RemoteAddr()
         udpAddr := remote.String()
         // fmt.Printf("[Library] Remote is: %s\n", udpAddr)
 
-        // generate new snet.UDPAddr
+        // generate new snet.UDPAddr for remote
         raddr, err := ResolveUDPAddr(udpAddr)
         if err != nil{
             return 0,err
         }
+
         // fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
 
-        // decode path from network packet
-        buffer := bytes.NewBuffer(localBuffer[1:])
-        fmt.Printf("[Library] Resolve dest to: %s\n", udpAddr)
-        dec := gob.NewDecoder(buffer)
-        var recvPath pathTrans
-        err = dec.Decode(&recvPath)
+        // open port to receive new path
+        // fmt.Printf("[Library] Opening port %d\n",recvPathPort)
+        tempConn, err := listenPort(recvPathPort)
         if err != nil{
-            fmt.Printf("[Library] Error decoding Path!\n")
+            fmt.Printf("[Library] Unable to open port: %d\n",recvPathPort)
             return 0,err
         }
 
-        // newPath := recvPath.Copy()
-        // err = newPath.Path().Reverse()
-        // if err != nil{
-        //     fmt.Printf("[Library] Error reversing path\n")
-        //     return 0, err
-        // }
-
-        // Set Path to newly received path
-        // SetPath(raddr,newPath)
-        // raddr.Path = recvPath.Path.Copy()
-        // fmt.Printf("[Library] Path: %x\n",raddr.Path)
-        // raddr.Path.Reverse()
-        // fmt.Printf("[Library] RevPath: %x\n",raddr.Path)
-        // fmt.Printf("[Library] NextIA: %s\n",recvPath.IA)
-        pathNextHop,err := QueryPaths(recvPath.IA)
+        // read packet from new port
+        tempBuf := make([]byte,16*1024)
+        n,from,err := tempConn.ReadFrom(tempBuf)
         if err != nil{
-            return 0, err
-        }
-
-        // raddr.NextHop = recvPath.UnderlayNextHop()
-        raddr.NextHop = pathNextHop[0].UnderlayNextHop()
-        // fmt.Printf("[Library] New Path: %s\n",raddr.Path)
-        // intfs := pathNextHop[0].Metadata().Interfaces
-        // fmt.Printf("[Library] New IntF: %s\n",intfs[0].ID)
-        // fmt.Printf("[Library] NextIA: %s\n",intfs[0].IA)
-        // fmt.Printf("[Library] New IntF: %s\n",intfs[1].ID)
-        // fmt.Printf("[Library] NextIA: %s\n",intfs[1].IA)
-        localPaths,err := QueryPaths(raddr.IA)
-        if err != nil{
-            return 0, err
-        }
-        // for n,e := range localPaths{
-        //     fmt.Printf("%d: %s\n",n,e)
-        // }
-        // fmt.Printf("WOOOOORKING ---------\n")
-        // fmt.Printf("%x \n",localPaths[5].Path())
-        // fmt.Printf("Local: %s \n",localPaths[5].UnderlayNextHop())
-        // fmt.Printf("Received: %s \n",raddr.NextHop)
-
-
-        //FIND CLOSEST PATH
-        best := 0
-        best_count := 0
-        for n,p := range localPaths{
-            localStr := fmt.Sprintf("%s\n",p.Metadata().Interfaces)
-            count := stringDiff(localStr, recvPath.Intfs)
-            if count > best_count{
-                best = n
-                best_count = count
-            }
-        }
-
-
-        // workaround!!
-        raddr.Path = localPaths[best].Path()
-        err = recvPath.Path.Reverse()
-        if err != nil{
-            fmt.Printf("[Library] Error Reversing Path\n")
-            fmt.Println(err)
+            fmt.Printf("[Library] Unable to read from opend port\n")
             return 0,err
         }
 
-        raddr.Path = recvPath.Path
-        // raddr.NextHop = localPaths[best].UnderlayNextHop()
-        // fmt.Printf("[Library] Picked Path #%s\n",localPaths[best].Metadata().Interfaces)
-        fmt.Printf("[Library] Picked Path #%s\n",localPaths[best])
-        localStr := fmt.Sprintf("%s\n",localPaths[best].Metadata().Interfaces)
-        if localStr == recvPath.Intfs{
-            fmt.Println("[Library] Path is Equal")
+        // the path in from can now be used for a connection
+        switch fromAddr := from.(type){
+        case (*snet.UDPAddr):
+             raddr.NextHop = (*fromAddr).NextHop
+             raddr.Path = (*fromAddr).Path
+        default:
+            fmt.Printf("[Library] Address casting failed\n")
+            return 0, serrors.New("Unable to cast UDPAddr")
         }
-
-
-        // =======================================
-        //
-        // var dPath scion.Decoded
-        // err = dPath.DecodeFromBytes(recvPath.Path.Raw)
-        // if err != nil{
-        //     fmt.Printf("[Library] Error decoding path\n")
-        //     fmt.Println(err)
-        //     return 0, err
-        // }
-        // fmt.Printf("%v+\n",dPath)
-        // err = dPath.DecodeFromBytes(localPaths[best].Path().Raw)
-        // if err != nil{
-        //     fmt.Printf("[Library] Error decoding path\n")
-        //     fmt.Println(err)
-        //     return 0, err
-        // }
-        //
-        // // Do the same with the reversed path
-        // fmt.Printf("%v+\n",dPath)
-        // err = recvPath.Path.Reverse()
-        // if err != nil{
-        //     fmt.Printf("[Library] Error Reversing Path\n")
-        //     fmt.Println(err)
-        //     return 0,err
-        // }
-        // err = dPath.DecodeFromBytes(recvPath.Path.Raw)
-        // if err != nil{
-        //     fmt.Printf("[Library] Error decoding path\n")
-        //     fmt.Println(err)
-        //     return 0, err
-        // }
-        // fmt.Printf("%v+\n",dPath)
-        // // fmt.Printf("%x\n",recvPath.Path)
-        // // fmt.Printf("%x\n",localPaths[best].Path())
-        //
-        // =============================================
-
-        // compare interface list
-        // fmt.Printf("Start comparison .....\n")
-        // localIntfs := localPaths[5].Metadata().Interfaces
-        // localIntfsString := fmt.Sprintf("%s\n",localIntfs)
-        // if (localIntfsString == recvPath.Intfs){
-        //     fmt.Println("Equal ---->>")
-        // }
-        // fmt.Println(localIntfsString)
-        // fmt.Println(recvPath.Intfs)
-        // fmt.Println(len(localIntfsString))
-        // fmt.Println(len(recvPath.Intfs))
-        // ll := len(recvPath.intfs)
-        // localIntfs := localPaths[5].Metadata().Interfaces
-        // fmt.Printf("Length: %d --> %d\n",ll,len(localIntfs))
-        // for n,pi := range recvPath.intfs{
-        //     if (pi.ID != localIntfs[ll-n].ID){
-        //         fmt.Printf("Diff ID: %s --> %s\n",pi.ID, localIntfs[ll-n].ID)
-        //     }
-        //     if (pi.IA != localIntfs[ll-n].IA){
-        //         fmt.Printf("Diff IA: %s --> %s\n",pi.IA, localIntfs[ll-n].IA)
-        //     }
-        // }
-
-        // fmt.Printf("Compare Result: %t\n", reflect.DeepEqual(localIntfs,recvPath.intfs))
-
 
         // create new connection with new path
-        fmt.Printf("[Library] Dialing %s\n", raddr)
+        // fmt.Printf("[Library] Dialing %s\n", raddr)
         err = p.DialAddr(raddr)
         if err != nil {
             return 0,err
         }
 
-        // send back ok
+        // send back confirmation of new path
+        pathOK := []byte("PathConnected")
+        n, err = tempConn.WriteTo(pathOK, from)
+        if err != nil{
+            fmt.Printf("[Library] Unable to send newPath connected\n")
+            return 0,err
+        }
+
+        // remove buffer and froms and reply
+        tempBuf = nil
+        from = nil
+        pathOK = nil
+
+        // close tempConn
+        err = tempConn.Close()
+        if err != nil{
+            fmt.Printf("[Library] Unable to close tempConn\n")
+            return 0,err
+        }
+
+        // send back ok reply := []byte("NewPathOK")
         reply := []byte("NewPathOK")
-        fmt.Printf("[Library] Sending NewPathOK\n")
+        // fmt.Printf("[Library] Sending NewPathOK\n")
         n,err = p.Write(reply)
         if err != nil || n != len(reply){
             fmt.Printf("[Library] Error Sending NewPathOK\n")
@@ -441,12 +353,14 @@ func (p *PathNegConn) Read (buf []byte) (int,error){
         localBuffer = nil
 
         // switch to new path and read from there
-        fmt.Printf("[Library] Recursive Read...\n")
+        // fmt.Printf("[Library] Recursive Read...\n")
         return p.Read(buf)
 
     // otherwise check for data
     } else if localBuffer[0] == dataType{
-        fmt.Printf("[Library] Got data... \n")
+        if verbose {
+            fmt.Printf("[Library] Got data... \n")
+        }
         // data in buffer
         // copy everything but first byte
         cpN := copy(buf,localBuffer[1:n])
@@ -475,7 +389,9 @@ func (p *PathNegConn) ReadFrom (buf []byte) (int,net.Addr,error){
     if err != nil{
         return 0, nil, err
     }
-    fmt.Printf("[Library] Got Data\n")
+    if verbose {
+        fmt.Printf("[Library] Got Data\n")
+    }
 
     return n, src, nil
 }
@@ -517,73 +433,72 @@ func (p *PathNegConn) WriteTo(buf []byte, dest net.Addr) (int,error) {
     // return adapted number of written bytes
     return n, nil
 }
-// func (p *PathNegConn) WriteToFrom(buf []byte, dest *net.Addr) (int,error){
-//     // convert address
-//     // clientCCAddr := dest.(*snet.UDPAddr)
-//     clientCCAddr := dest
-//
-//     // call WriteTo
-//     n,err := p.WriteTo(buf,clientCCAddr)
-//     return n,err
-// }
 
 
-
-func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr) (int,error){
+func (p *PathNegConn) SendPath(sendPath snet.Path , dest net.Addr, destSNet *snet.UDPAddr) (int,error){
     // check for existance of connection
     if p.listenConn == nil{
         return 0, errNoWriteToConn
     }
 
-    // prepare data structure to send path
-    inters := sendPath.Metadata().Interfaces
-    nextIA := inters[len(inters)-2].IA
-    fmt.Printf("[Library] NextIA: %s\n",nextIA)
+    // send get ready signal
+    firstMessageBuffer := make([]byte,2)
+    firstMessageBuffer[0] = newPathType
 
-    var pt pathTrans
-    pt.Path = sendPath.Path()
-    pt.IA = nextIA
-    // fmt.Printf("[Library] IntersSize: %d\n",len(inters))
-    // fmt.Printf("[Library] IntersSize: %d\n",len(pt.intfs))
-    // fmt.Printf("[Library] Str: %s\n",inters)
-    // InterString := fmt.Sprintf("%s\n",inters)
-
-    var revIters []snet.PathInterface
-    for i:=len(inters)-1; i>=0; i--{
-        revIters = append(revIters,inters[i])
-    }
-    pt.Intfs = fmt.Sprintf("%s\n",revIters)
-
-
-    // prepare path data
-    var pathBytes bytes.Buffer
-    enc := gob.NewEncoder(&pathBytes)
-    err := enc.Encode(pt)
-    if err != nil{
-        fmt.Printf("[Library] Error Encoding path\n")
-        return 0, err
-    }
-
-    // copy data to new buffer
-    inbetween := pathBytes.Bytes()
-    fmt.Printf("[Library] Sending path, size: %d bytes\n",len(inbetween))
-    l := len(inbetween)
-    fmt.Printf("[Library] Inbetween size: %d\n",l)
-    localBuffer := make([]byte,l+1)
-    n := copy(localBuffer[1:],inbetween)
-    if n != l {
-        return 0,errFailedCopy
-    }
-
-    // set type of payload to newPath
-    localBuffer[0] = newPathType
-
-    n, err = p.listenConn.WriteTo(localBuffer,dest)
+    // send first notification
+    _, err := p.listenConn.WriteTo(firstMessageBuffer,dest)
     if err != nil {
         return 0, err
     }
 
-    // wait for confirmation
+    // give time for the client to act
+    time.Sleep(time.Second * 3)
+
+    // create new destination for fixed Port
+    l := len(dest.String())
+    newFrom := dest.String()[:l-5]
+    recvPathPortStr := fmt.Sprintf("%d",recvPathPort)
+    newDest := string(append([]byte(newFrom),recvPathPortStr...))
+    // fmt.Printf("[Library] NewDest: %s\n",newDest)
+
+    // resolve the new destination
+    destination,err := ResolveUDPAddr(newDest)
+    if err != nil{
+        fmt.Printf("[Library] Failed to resolve (new path) destination\n")
+        return 0,err
+    }
+
+    // set selected path details
+    SetPath(destination,sendPath)
+
+    // connect to client and send packet on new path
+    tempConn,err := dialAddr(destination)
+    if err != nil{
+        fmt.Printf("[Library] Failed to Dial destination on new path\n")
+        return 0,err
+    }
+
+    // send data on path
+    n,err := tempConn.Write(firstMessageBuffer)
+    if n != 2 || err != nil{
+        fmt.Printf("[Library] Failed to send data on new path\n")
+        return 0,err
+    }
+
+    // 
+    recvBuf := make([]byte,16*1024)
+    n, err = tempConn.Read(recvBuf)
+    if err != nil{
+        fmt.Printf("[Library] Fail to recv path confirmation\n")
+        return 0,err
+    }
+
+    if verbose {
+        fmt.Printf("[Library] %s\n", string(recvBuf))
+    }
+
+    // close connection
+    tempConn.Close()
 
     // return adapted number of written bytes
     return (n-1), nil
@@ -675,7 +590,9 @@ func listen(listen *net.UDPAddr) (*snet.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-        fmt.Printf("[Library] DefaultLocalIP to: %s\n",localIP)
+        if verbose{
+            fmt.Printf("[Library] DefaultLocalIP to: %s\n",localIP)
+        }
 		listen = &net.UDPAddr{IP: localIP, Port: listen.Port, Zone: listen.Zone}
 	}
     defNetwork := DefNetwork()
@@ -683,7 +600,9 @@ func listen(listen *net.UDPAddr) (*snet.Conn, error) {
     if integrationEnv == "1" || integrationEnv == "true" || integrationEnv == "TRUE" {
         fmt.Printf("Listening ia==:%v\n", defNetwork.IA)
     }
-    fmt.Printf("[Library] Listening to: %s\n",listen)
+    if verbose{
+        fmt.Printf("[Library] Listening to: %s\n",listen)
+    }
     return defNetwork.Listen(context.Background(), "udp", listen, addr.SvcNone)
 }
 

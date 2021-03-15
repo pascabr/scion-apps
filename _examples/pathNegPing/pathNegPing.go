@@ -18,6 +18,7 @@ import (
     "flag"
     "fmt"
     "time"
+    "strings"
     "os"
     "math/rand"
 
@@ -34,6 +35,7 @@ var (
     // clientAddr string = "1-ff00:0:112,[127.0.0.60]"
     serverAddr string = "1-ff00:0:131,[127.0.0.1]:1234"
     clientAddr string = "1-ff00:0:112,[127.0.0.1]"
+    verbose bool = false
 )
 const sleepTime int = 3
 
@@ -89,7 +91,6 @@ func run_server() error {
         // print packet
         fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
 
-        response := []byte("Hello Back")
 
         // print paths to sender
         fmt.Printf("[Server] Paths to Sender: \n")
@@ -98,27 +99,32 @@ func run_server() error {
             return err
         }
         paths,err := pnc.GetPaths(fromAddr)
-        // if err == nil{
-        //     for n,p := range paths{
-        //         fmt.Printf(" - Path %d:", n)
-        //         fmt.Println(p.Metadata().Interfaces)
-        //     }
-        // }
+        if err == nil && verbose{
+            for n,p := range paths{
+                fmt.Printf(" - Path %d:", n)
+                fmt.Println(p.Metadata().Interfaces)
+            }
+        }
 
         // pick a path at random
         r := rand.Int() % len(paths)
-        fmt.Printf("[Server] Selcted Path %d: %s\n", r,paths[r])
-        // path := paths[r].Path().Copy()
-        // err = path.Reverse()
-        // if err != nil{
-        //     return err
-        // }
+        // fmt.Printf("[Server] Selected Path %d: %s\n", r,paths[r])
+        ialist := ""
+        for n,iter := range paths[r].Metadata().Interfaces{
+            if n % 2 == 1{
+                continue
+            }
+            ias := strings.Split(fmt.Sprintf("%s",iter.IA),":")
+            if n == 0{
+                ialist = fmt.Sprintf("%s",ias[2])
+            }else{
+                ialist = fmt.Sprintf("%s -> %s",ialist,ias[2])
+            }
+        }
+        fmt.Printf("[Server] %s\n",ialist)
 
-        // fmt.Printf("[Server] Path: %x\n",path)
-        // from = snet.UDPAddr* (from)
-        // from.Path = paths[r].Path()
-        // from = net.Addr (from)
-        n, err = pnc.SendPath(paths[r], from)
+        // Tell client to switch path
+        n, err = pnc.SendPath(paths[r], from, fromAddr)
         if (err != nil){
             fmt.Printf("[Server] Error Sending Path\n")
             fmt.Printf("[Server] %s\n",err)
@@ -135,7 +141,9 @@ func run_server() error {
         // print packet
         fmt.Printf("[Server] Packet: %s, size: %d\n",string(buffer),n)
 
-        fmt.Printf("[Server] Sending to %s....\n",from)
+        response := []byte("Hello Back")
+
+        fmt.Printf("[Server] Sending to %s --> %s\n",string(response),from)
         // send back --> same path
         n, err = pnc.WriteTo(response, from)
         if err != nil{
@@ -168,9 +176,9 @@ func run_client() error {
     fmt.Printf("[Client] Starting...\n")
 
     for{
-        fmt.Printf("[Client] Sending ...\n")
         // send hello to server
         s := []byte("Hello World")
+        fmt.Printf("[Client] Sending: %s\n",s)
         nBytes, err := pnc.Write(s)
         if err != nil || nBytes != len(s){
             fmt.Printf("[Client] Couldn't send data\n")
